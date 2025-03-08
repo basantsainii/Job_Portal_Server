@@ -36,6 +36,7 @@ export const getUser = async (req, res) => {
 };
 
 // post User API with email verification
+// sign up api
 
 export const signUpUser = async (req, res) => {
   const { fname, lname, email, phone, password } = req.body;
@@ -80,7 +81,7 @@ export const signUpUser = async (req, res) => {
         }
       );
 
-      // await sendVerificationMail(email, "Email Verification", content);
+      await sendVerificationMail(email, "Email Verification", content);
       res.status(201).json({ message: "User created Successfully" });
     }
   } catch (e) {
@@ -134,6 +135,9 @@ const validatePassword =  async (password, hashedPassword) => {
   }
 };
 
+
+
+
 // login user API
 export const LoginUser = async (req, res, next) => {
   const { email, password } = req.body;
@@ -144,7 +148,7 @@ export const LoginUser = async (req, res, next) => {
   }
 
   // check if user exists in db
-    const UserExist = await UserData.findOne({ email: email });
+    const UserExist = await UserData.findOne({ email: email }).select("+password"); // for selecting password in response because by default it is select false
     if (!UserExist) {
       return res.status(404).json({ message: "User not found  or wrong password" });
     }
@@ -154,7 +158,18 @@ export const LoginUser = async (req, res, next) => {
       return res.status(401).json({ message: "Email not verified", redirectUrl: "/resend-mail-verification-link"});
     }
 
+    // checking for Role
+    if(!UserExist.role){
+      return res
+      .status(201)
+      .json({success: true, message:`please select as you want`, redirectUrl: "/select-role-of-user"});
+      
+    }
+
     // matching password
+    if(!UserExist.password){
+      throw new customError(400, "password not fetched" )
+    }
     const SavedPassword = UserExist.password;
     const matched = await validatePassword(password, SavedPassword)
     // const matched = await bcrypt.compare(password, SavedPassword);
@@ -162,27 +177,27 @@ export const LoginUser = async (req, res, next) => {
     
     // if password is valid, generate and send token
     if (matched) {
-          const token = jwt.sign({name : UserExist.name, role : UserExist.role, id: UserExist._id.toString()}, "123456", {expiresIn : "10m" });
+      // console.log(process.env.JWT_SECRET)
+      const JWT_SECRET = process.env.JWT_SECRET;
+          const token = jwt.sign({name : UserExist.fname+" "+UserExist.lname, role : UserExist.role, id: UserExist._id.toString()}, JWT_SECRET, {expiresIn : "10d" });
           res.set("Authorization", `Bearer ${token}`) // will set cookie/token in header by making a custom header first argument in it
           // res.set("authorization", '')
           // res.cookie("jwtToken",token); // will set cookie/token in  predefined 'set-cookie' header  
-      // checking for Role
-    if(UserExist.role){
-      if(UserExist.role==="Employee"){
-        res
-        .status(201)
-        .json({ message: "User logged in successfully", redirectUrl: "/employee-dashboard"});
-      }else{
-        res
-        .status(201)
-        .json({ message: "User logged in successfully", redirectUrl: "/employer-dashboard"});
-      }
-    }else{
-      res
-        .status(201)
-        .json({ message: "User logged in successfully", redirectUrl: "/select-role-of-user"});
-    }
-      
+          
+          // selecting route based on role
+          if(UserExist.role==="admin"){
+            res
+            .status(201)
+            .json({success: true, message:`welcome ${UserExist.fname+" "+UserExist.lname}`, redirectUrl: "/admin-dashboard"});
+          }else if(UserExist.role==="Employer"){
+            res
+            .status(201)
+            .json({success: true, message:`welcome ${UserExist.fname+" "+UserExist.lname}`, redirectUrl: "/employer-dashboard"});
+          }else{
+            res
+            .status(201)
+            .json({success: true, message:`welcome ${UserExist.fname+" "+UserExist.lname}`, redirectUrl: "/employee-dashboard"});
+          }
     }
     else {
       return res.status(400).json({ message: "Invalid credentials , wrong password" });
@@ -192,7 +207,30 @@ export const LoginUser = async (req, res, next) => {
 
 
 
-// generate password
+// Auto Login authentication
+export const AutoLogin = async(req, res, next)=>{
+  const {id}= req.user;
+// console.log(id)
+  if(!id){
+throw new customError(400,"token expired")
+  }
+
+  const userExist = await UserData.findById(id);
+  
+  // console.log("user ",userExist)
+  if(!userExist){
+    throw new customError(401,"user not Exist")
+  }
+  // req.ExistUser = {fname : userExist.fname, lname : userExist.lname, email : userExist.email, role : userExist.role} 
+  req.ExistUser = {fname : userExist.fname, lname : userExist.lname, email : userExist.email, role : userExist.role, dp: userExist.dp} 
+  next();
+}
+
+
+
+
+
+// generate OTP
 const generateOTP = () => {
   // let length = 6,
   //   charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -205,10 +243,11 @@ const generateOTP = () => {
   // password += charset.charAt(Math.floor(Math.random() * n));
   // }
 
-  const password = Math.floor(Math.random() * (999999 - 100000) + 100000); //
-  console.log(password);
-  return password;
-};
+  const Otp = Math.floor(Math.random() * (999999 - 100000) + 100000); //
+  console.log("OTP ",Otp);
+  return Otp;
+}; 
+
 
 
 
@@ -246,20 +285,21 @@ export const forgotPassword = async (req, res) => {
 // OTP verification
 export const OTPVerification = async (req, res) =>{
   const { email, Otp } = req.body;
-
+// console.log(Otp)
   // checking for data
-  if(!email ||!Otp){
+  if(!email || !Otp){
     return res.status(400).json({message: "All fields are required"})
   }
   try{
     // getting user from db
-    const UserExist = await UserData.findOne({ email: email});
+    const UserExist = await UserData.findOne({ email: email}).select("+Otp");
     if(!UserExist){
       return res.status(404).json({message: "User not found"})
     }
-
+// console.log("67",UserExist) 
     // matching otp
     const OTP = UserExist.Otp 
+    // console.log(OTP)
     if(Otp == OTP){
       UserExist.Otp = undefined;
       await UserExist.save()
@@ -267,7 +307,7 @@ export const OTPVerification = async (req, res) =>{
     }
 
     // success response
-    res.status(401).json({success : true, message: "Invalid OTP"})
+    res.status(401).json({success : false, message: "Invalid OTP"})
   }catch(err){ 
     return res.status(500).json({message: "Internal server error, OTP verification failed"})
   }
@@ -329,7 +369,7 @@ throw new customError(400, "user Not Found")
    res.se
 }
 
-// selecting role for user when logging
+// selecting role for user when first time logging
 export const RoleSelector = async (req, res)=>{
 const {role, email} = req.body;
 console.log({role, email})
@@ -339,9 +379,78 @@ if(!role || !email){
 const User = await  UserData.findOne({email:email});
 if(!User){
   throw new customError(404, "user not found");
-}
+} 
 User.role = role;
 await User.save();
 res.status(201).json({success:true, message: "role Updated", redirectUrl : "/dashboard"})
 // res.redirectUrl("/dashboard")
+} 
+
+
+
+//// storing profile image path (single file); in data base
+export const StoreFilePath = async (req,res)=>{
+
+  // getting userid from userAuth as in req.user header make custom in userAuth
+  // console.log(req.user)
+  // console.log(req.user.id)
+  const id = req.user.id;
+
+  if(!id){
+    throw new customError(401, "please try again later token expired")
+  }
+
+
+
+  // getting path url from upload.single which is define in upload using multer and storing on cloudinary
+  console.log(req.file)  // gets file details from cloudinary bby multer
+
+  if((req.file.mimetype === "image/png" )|| (req.file.mimetype === "image/jpg" ) || (req.file.mimetype === "image/jpeg")){
+    const imagePath = req.file.path; // path of stored file
+    // console.log(imagePath);
+  
+    if(!imagePath){
+      throw new customError(401, "image path not found try again later")
+    }
+  
+    const user = await UserData.findById(id)
+  
+    user.dp = imagePath;
+    user.save();
+  }else if(req.file.mimetype === "application/pdf"){
+    const filepath = req.file.path;
+    if(!filepath){
+      throw new customError(401, "file path not found try again later")
+    }
+    const user = await UserData.findById(id)
+    user.resume = filepath;
+    user.save();
+  }else{
+    console.log("mimetype not matched")
+    throw new customError(403, "something went wrong, file not saved")
+  }
+  
+
+
+  // res.send("file uploaded Successfully")
+  res.status(201).json({success: true, message:"file uploaded successfully"})
+}
+
+
+
+// //// getting user profile data
+export const ProfileData = async (req, res)=>{
+// getting id from userAuth middleware
+console.log(req.user)
+const id = req.user.id;
+console.log(id);
+if(!id){
+  throw new customError(401, "something went Wrong try close and login again")
+}
+const userProfileData = await UserData.findOne({_id:id})
+if(!userProfileData){
+  throw new customError(401, "user invalid or something went wrong")
+}
+
+res.status(200).json({success: true, message: "all ok", userProfileData})
 } 

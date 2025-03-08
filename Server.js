@@ -60,6 +60,7 @@ App.use((err, req, res, next) => {
     // console.error(err.stack); 
     let statusCode = 500;
     let message = "Something went wrong, error in targeted controller";
+    // console.log(err) 
 console.log("catch Err : ",err.message)
     if(err instanceof customError){
         statusCode = err.statusCode;
